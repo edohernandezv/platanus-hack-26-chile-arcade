@@ -233,6 +233,7 @@ function update(time, delta) {
   } else if (s.ph === 'saved') {
     if (consume(s, ['START1', 'START2', 'P1_1', 'P2_1'])) volverTitulo(s);
   }
+  musica(s);
   render(s, dt);
   for (const k in s.controls.pressed) s.controls.pressed[k] = false;
 }
@@ -436,7 +437,7 @@ function dibujarFonda(s) {
   P(12, 9, 'VINO');
 }
 
-// guirnalda de ampolletas, banderines, fardos, banderas y faroles (encima de la vineta)
+// guirnalda de ampolletas, banderines y banderas (encima de la vineta)
 function adornos(g) {
   const amp = (x, y, i) => g.fillStyle(0xffc860, 0.18).fillCircle(x, y, 7).fillStyle(0x2a1a10, 1).fillRect(x - 2, y - 6, 4, 3).fillStyle(i % 2 ? 0xffb040 : 0xffe080, 1).fillCircle(x, y, 3);
   for (let i = 0; i < 24; i++) amp(12 + i * 24, 13 + Math.abs(Math.sin(i * 1.3)) * 3, i);
@@ -447,16 +448,8 @@ function adornos(g) {
       if (i < 12) g.fillStyle([0xd8262a, 0xf4eee0, 0x2456c8][i % 3], 1).fillTriangle(x, y, x, y + 14, x + d * 14, y + 7);
       amp(X(31, 0), 130 + i * 30, i);
     }
-    // fardo de paja
-    const fx0 = X(2, 36);
-    caja(g, fx0, 428, 36, 26, 0xd8b048, 0x6a4a14, 3, 2).fillStyle(0xf0d070, 1).fillRect(fx0 + 3, 431, 30, 3);
-    g.fillStyle(0x8a6418, 1).fillRect(fx0 + 10, 428, 3, 26).fillRect(fx0 + 23, 428, 3, 26);
     bandera(g, X(4, 24), 150, 24, 16);
     g.fillStyle(0x2a1a10, 1).fillRect(X(4, 24) + (L ? 23 : -1), 146, 2, 34);
-    const fx = X(6, 16);
-    g.fillStyle(0x2a1a10, 1).fillRect(fx + 6, 488, 4, 8).fillRect(fx, 496, 16, 4).fillRect(fx, 516, 16, 4);
-    g.fillStyle(0xffd060, 1).fillRect(fx + 2, 500, 12, 16);
-    g.fillStyle(0xfff4c0, 1).fillRect(fx + 5, 503, 4, 8);
   }
 }
 
@@ -718,7 +711,11 @@ function entregar(s, P, T) {
     if (h.st === 2) return err(s, P, '¡Quemado! Ya se deshace');
   }
   const ok = s.g.tk.filter((tk) => calza(h, tk)).sort((a, b) => a.t - b.t)[0];
-  if (!ok) return err(s, P, 'Nadie pidió ' + nombre(h));
+  if (!ok) {
+    P.h = null;
+    pop(s, T.x, T.y - 44, 'Sin pedido: 0 puntos', '#ffe066');
+    return;
+  }
   const tip = Math.round(15 * ok.t / ok.T);
   const pts = PTS + (ok.v ? EXTRA : 0) + tip;
   s.g.sc += pts;
@@ -757,7 +754,7 @@ function iniciar(s) {
   s.ph = 'play';
   snd(s, 'select');
   aviso(s, '¡A COCINAR!', '#ffe066');
-  musica(s);
+  if (s.M) s.M.q = s.M.k = 0;
 }
 
 // 1 jugador: B3 cambia de chef
@@ -1533,21 +1530,24 @@ function consume(s, codes) {
 }
 
 // ===== SONIDO (Web Audio) =====
-function tono(ctx, f, f2, d, ty, v, dl) {
+const SQ = 'square', TRI = 'triangle';
+// ty: tipo de onda o PeriodicWave; dl: retraso en s; out: nodo destino (musica)
+function tono(ctx, f, f2, d, ty, v, dl, out) {
   const n = ctx.currentTime + (dl || 0);
   const o = ctx.createOscillator(), g = ctx.createGain();
-  o.type = ty;
+  if (ty.at) o.type = ty; else o.setPeriodicWave(ty);
   o.frequency.setValueAtTime(f, n);
-  o.frequency.exponentialRampToValueAtTime(f2, n + d);
+  o.frequency.exponentialRampToValueAtTime(f2 || f, n + d);
   g.gain.setValueAtTime(v, n);
   g.gain.exponentialRampToValueAtTime(0.001, n + d);
   o.connect(g);
-  g.connect(ctx.destination);
+  g.connect(out || ctx.destination);
   o.start(n);
   o.stop(n + d + 0.02);
+  return o;
 }
 
-function ruido(s, ctx, d, v, fq) {
+function ruido(s, ctx, d, v, fq, dl, out) {
   if (!s.nb) {
     s.nb = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
     const a = s.nb.getChannelData(0);
@@ -1557,12 +1557,12 @@ function ruido(s, ctx, d, v, fq) {
   src.buffer = s.nb;
   fl.type = 'bandpass';
   fl.frequency.value = fq;
-  const n = ctx.currentTime;
+  const n = ctx.currentTime + (dl || 0);
   g.gain.setValueAtTime(v, n);
   g.gain.exponentialRampToValueAtTime(0.001, n + d);
   src.connect(fl);
   fl.connect(g);
-  g.connect(ctx.destination);
+  g.connect(out || ctx.destination);
   src.start(n, Math.random() * 0.5);
   src.stop(n + d);
 }
@@ -1573,46 +1573,86 @@ function snd(s, ty) {
     if (!c) return;
     if (c.state === 'suspended') c.resume();
     const T = (f, f2, d, w, v, dl) => tono(c, f, f2, d, w, v, dl);
-    if (ty === 'pick') T(500, 800, 0.07, 'square', 0.08);
-    else if (ty === 'drop') T(600, 350, 0.07, 'square', 0.07);
-    else if (ty === 'arma') { T(520, 520, 0.06, 'square', 0.08); T(780, 780, 0.08, 'square', 0.08, 0.06); }
-    else if (ty === 'chop') { ruido(s, c, 0.05, 0.25, 2500); T(180, 90, 0.04, 'square', 0.06); }
-    else if (ty === 'cortado') T(660, 990, 0.12, 'triangle', 0.15);
+    if (ty === 'pick') T(500, 800, 0.07, SQ, 0.08);
+    else if (ty === 'drop') T(600, 350, 0.07, SQ, 0.07);
+    else if (ty === 'arma') { T(520, 0, 0.06, SQ, 0.08); T(780, 0, 0.08, SQ, 0.08, 0.06); }
+    else if (ty === 'chop') { ruido(s, c, 0.05, 0.25, 2500); T(180, 90, 0.04, SQ, 0.06); }
+    else if (ty === 'cortado') T(660, 990, 0.12, TRI, 0.15);
     else if (ty === 'sizzle') ruido(s, c, 0.35, 0.05, 6000);
-    else if (ty === 'listo') { T(880, 880, 0.08, 'triangle', 0.15); T(1175, 1175, 0.12, 'triangle', 0.15, 0.09); }
-    else if (ty === 'alarma') T(1400, 1400, 0.08, 'square', 0.06);
+    else if (ty === 'listo') { T(880, 0, 0.08, TRI, 0.15); T(1175, 0, 0.12, TRI, 0.15, 0.09); }
+    else if (ty === 'alarma') T(1400, 0, 0.08, SQ, 0.06);
     else if (ty === 'quema') { T(300, 60, 0.5, 'sawtooth', 0.15); ruido(s, c, 0.5, 0.15, 800); }
-    else if (ty === 'puf') { ruido(s, c, 0.45, 0.25, 500); T(220, 70, 0.4, 'triangle', 0.12); }
-    else if (ty === 'ok') [523, 659, 784, 1047].forEach((f, i) => T(f, f, 0.12, 'triangle', 0.16, i * 0.07));
+    else if (ty === 'puf') { ruido(s, c, 0.45, 0.25, 500); T(220, 70, 0.4, TRI, 0.12); }
+    else if (ty === 'ok') [523, 659, 784, 1047].forEach((f, i) => T(f, 0, 0.12, TRI, 0.16, i * 0.07));
     else if (ty === 'err') T(200, 110, 0.22, 'sawtooth', 0.1);
-    else if (ty === 'ticket') { T(1568, 1568, 0.05, 'sine', 0.1); T(2093, 2093, 0.08, 'sine', 0.1, 0.06); }
-    else if (ty === 'tick') T(1000, 1000, 0.05, 'square', 0.07);
-    else if (ty === 'click') T(1200, 600, 0.04, 'square', 0.06);
-    else if (ty === 'select') T(700, 1400, 0.1, 'square', 0.1);
+    else if (ty === 'ticket') { T(1568, 0, 0.05, 'sine', 0.1); T(2093, 0, 0.08, 'sine', 0.1, 0.06); }
+    else if (ty === 'tick') T(1000, 0, 0.05, SQ, 0.07);
+    else if (ty === 'click') T(1200, 600, 0.04, SQ, 0.06);
+    else if (ty === 'select') T(700, 1400, 0.1, SQ, 0.1);
     else if (ty === 'glu') [0, 1, 2, 3].forEach((i) => T(240 + i * 30, 480 + i * 40, 0.07, 'sine', 0.18, i * 0.1));
     else if (ty === 'compadre') { T(900, 1400, 0.12, 'sine', 0.1); T(900, 600, 0.15, 'sine', 0.1, 0.14); }
-    else if (ty === 'fin') [784, 659, 523, 392, 523].forEach((f, i) => T(f, f, 0.18, 'triangle', 0.15, i * 0.14));
+    else if (ty === 'fin') [784, 659, 523, 392, 523].forEach((f, i) => T(f, 0, 0.18, TRI, 0.15, i * 0.14));
   } catch (_) {}
 }
 
-// Musiquita de cueca en 6/8 (re mayor: tonica-dominante), solo durante la partida.
+// ===== MZICA: cumbia chiptune a 112 BPM en do menor (estilo "Mujeres y cerveza") =====
+// Cada seccion: [melodia, acordes]. Melodia en pares de chars: nota (codigo = midi, ' ' = silencio)
+// y duracion en semicorcheas (codigo - 48). Acordes: un char por compas, raiz del bajo = codigo - 24
+// (A=Fa, D=Lab, F=Sib, H=Do). Orden: intro una vez, luego 1, 1', 2, 2' en loop.
+const M1 = 'R1R1R2R1P3J1J1J2J1M1P2R1R1R3R1M2J1J1M2P2V2T1T3O3O3O2O2R2R1R3R4J2J1M1J1M1P2R1R4R1M2J1J3V2V3T3O4O6O1O1';
+const M2 = 'M2O2O4K2J2M2K2J1H3H4H7O1M2K4O4J2K1J3H4H4H:W4[4J2M1J1K3H7H4H6W2[3K1J2J2M1J1H2[8H2H6';
+const MZ = [
+  ['R4T4 8R4T4 8R4T4 8R4T2T2T2T2 4', 'FHFH'],
+  [M1, 'FFHFFH'],
+  [M2, 'FHFHDHAH'],
+  // variaciones (segunda pasada): remate a do agudo y relleno sol-fa en la nota larga
+  [M1.replace('O2O2R2', 'O2O2T2').replace('O6O1', 'O4T2O1'), 'FFHFFH'],
+  [M2.replace('H:', 'H6O2M2').replace('H2H6', 'H2T6'), 'FHFHDHAH'],
+].map(([m, a]) => {
+  const n = [];
+  for (let i = 0, p = 0; i < m.length; i += 2) p += (n[p] = [m.charCodeAt(i), m.charCodeAt(i + 1) - 48])[1];
+  return [n, a];
+});
+const HZ = (m) => 440 * 2 ** ((m - 69) / 12);
+
+// Estado del secuenciador sobre un AudioContext (sirve igual para un OfflineAudioContext)
+function mIni(c, out) {
+  const M = { c, q: 0, k: 0, t: 0, g: c.createGain(), l: c.createOscillator(), v: c.createGain() };
+  const R = new Float32Array(16).map((_, n) => n && Math.sin(n * 0.785) / n); // pulso 25%
+  M.w = c.createPeriodicWave(R, R.map(() => 0));
+  M.l.connect(M.v); // vibrato compartido por todas las notas de la melodia
+  M.l.start();
+  M.g.connect(out);
+  return M;
+}
+
+// Programa semicorcheas hasta el tiempo 'hasta'. mel: con melodia; cu: algun chef muy curado
+function mTick(s, M, hasta, mel, bpm, cu) {
+  const c = M.c, u = 15 / bpm;
+  if (M.t < c.currentTime) M.t = c.currentTime + 0.05;
+  M.v.gain.value = cu ? 45 : 7;
+  M.l.frequency.value = cu ? 1.7 : 5.5;
+  while (M.t < hasta) {
+    const [n, a] = MZ[M.q], k = M.k, q = k % 16, r = a.charCodeAt(k >> 4) - 24, dl = M.t - c.currentTime, b = [0, , , , , , 0, , 7, , , , 12][q];
+    // guacharaca: chiiik-chi-chi por tiempo, acento en el contratiempo
+    ruido(s, c, q % 4 ? 0.04 : 0.11, q % 4 == 2 ? 0.5 : 0.22, 7000, dl, M.g);
+    // timbal en el 4
+    if (q > 11 && q % 2 == 0) tono(c, 330, 150, 0.09, 'sine', q > 12 ? 0.3 : 0.2, dl, M.g);
+    // bajo saltado: tonica en 1 (y anticipada), quinta en 3, octava en 4
+    if (b > -1) tono(c, HZ(r + b), 0, u * 3, TRI, 0.55, dl, M.g);
+    if (mel && n[k] && n[k][0] > 40) M.v.connect(tono(c, HZ(n[k][0]), 0, Math.min(n[k][1] * u, 1.2), M.w, 0.11, dl, M.g).detune);
+    M.t += u;
+    if (++M.k >= a.length * 16) M.k = 0, M.q = M.q % 4 + 1;
+  }
+}
+
+// Llamado cada cuadro: partida = todo; titulo = solo base suave; pausa y fin = silencio
 function musica(s) {
-  if (s.mus) return;
-  s.mus = 1;
-  let i = 0;
-  s.time.addEvent({
-    delay: 190,
-    loop: true,
-    callback: () => {
-      if (s.ph !== 'play') return;
-      try {
-        const c = s.sound.context;
-        const b = i % 6, bar = Math.floor(i / 6) % 4;
-        const root = [146.83, 110, 110, 146.83][bar];
-        if (b === 0 || b === 3) tono(c, root / 2, root / 2, 0.18, 'triangle', 0.09);
-        else tono(c, root * [1, 1.25, 1.5, 2, 1.5, 1.25][b], root * [1, 1.25, 1.5, 2, 1.5, 1.25][b], 0.09, 'square', 0.018);
-      } catch (_) {}
-      i++;
-    },
-  });
+  try {
+    const c = s.sound.context;
+    if (!c || c.state != 'running') return;
+    const M = s.M || (s.M = mIni(c, c.destination)), p = s.ph == 'play', ti = s.ph == 'title';
+    M.g.gain.setTargetAtTime(p ? 0.3 : ti ? 0.12 : 0, c.currentTime, 0.03);
+    if (p || ti) mTick(s, M, c.currentTime + 0.3, p, 115 + (p ? Math.max(0, s.g.el - RONDA + 30) * 0.4 : 0), p && s.pl.some((P) => P.cu > 2));
+  } catch (_) {}
 }

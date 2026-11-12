@@ -1,3 +1,4 @@
+(()=>{
 // La Fonda — Platanus Hack 26
 // Cocina cooperativa dieciochera para 1 o 2 jugadores: anticuchos y choripanes.
 // Etapa 2: menu de modo, choripan con pebre, variantes y el curado de cada chef.
@@ -1656,3 +1657,5 @@ function musica(s) {
     if (p || ti) mTick(s, M, c.currentTime + 0.3, p, 115 + (p ? Math.max(0, s.g.el - RONDA + 30) * 0.4 : 0), p && s.pl.some((P) => P.cu > 2));
   } catch (_) {}
 }
+
+})();

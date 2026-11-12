@@ -96,6 +96,7 @@ new Phaser.Game({
   parent: 'game-root',
   backgroundColor: '#140f1c',
   pixelArt: true,
+  render: { preserveDrawingBuffer: true },
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH, width: W, height: H },
   scene: { create, update },
 });
